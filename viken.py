@@ -3,26 +3,56 @@ import argparse
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException
 import enum
 import time
 from bs4 import BeautifulSoup
-from dataclasses import dataclass
+from dataclasses import dataclass, InitVar, field
 
 
 @dataclass
 class JobAdOverview:
-    webcruiter_id: str
-    href: str
-    heading: str
-    city: str
-    published: str
-    deadline: str
+    job_element: InitVar[WebElement]
+    webcruiter_id: str = field(init=False)
+    href: str = field(init=False)
+    heading: str = field(init=False)
+    city: str = field(init=False)
+    published: str = field(init=False)
+    deadline: str = field(init=False)
 
+    def __post_init__(self, job_element: WebElement):
+        self.webcruiter_id = job_element.get_attribute("id")
+        self.href = job_element.get_attribute("href")
+        self.heading = self.__get_ad_title(job_element)
+        self.city = self.__get_city_name(job_element)
+        self.published = self.__get_published_date(job_element)
+        self.deadline = self.__get_deadline(job_element)
 
-class FilterByDiscipline(enum.Enum):
+    def __get_ad_title(self, job_element: WebElement):
+        title_element = job_element.find_element(By.XPATH, './/div[starts-with(@data-bind, "text:Heading")]')
+        return title_element.text
+
+    def __get_city_name(self, job_element: WebElement):
+        city_element = job_element.find_element(By.XPATH, './/span[starts-with(@data-bind, "text:Workplace")]')
+        return city_element.text
+
+    def __get_published_date(self, job_element: WebElement):
+        published_element = job_element.find_element(By.XPATH, './/span[starts-with(@data-bind, "shortDate:PublishedDate")]')
+        return published_element.text
+
+    def __get_deadline(self, job_element: WebElement):
+        deadline_group = job_element.find_element(By.XPATH, './/div[starts-with(@data-template, "advert-status")]')
+        return self.__find_visible_deadline_option(deadline_group).text
+
+    def __find_visible_deadline_option(self, deadline_group: WebElement):
+        deadline_options = ["ThreeDaysLeft", "TwoDaysLeft", "LastChance", "HourLeft", "Deadline"]
+        deadline_elements = [deadline_group.find_element(By.XPATH, f'.//div[starts-with(@data-bind, "visible:{deadline_option}")]') for deadline_option in deadline_options]
+        return list(filter(lambda deadline_element: deadline_element.is_displayed(), deadline_elements))[0]
+
+class Discipline(enum.Enum):
     administration = "Administrasjon"
     other_health = "Andre helsefagselt"
     other_engineering = "Andre ingeniørfag"
@@ -46,112 +76,68 @@ class WebCruiterAutomation:
         self.__timeout = timeout
         self.__webcruiter_url = webcruiter_url
 
-    def __wait_until_loaded(self):
-        try:
-            loading_modal = self.__browser.find_element(By.ID, 'loadingModal')
-            self.wait.until(EC.invisibility_of_element(loading_modal))
-        except NoSuchElementException:
-            pass
+    def load_page(function_candidate: callable):
+        def wait_until_loaded(self, *args, **kwargs):
+            try:
+                loading_modal = self.__browser.find_element(By.ID, 'loadingModal')
+                self.wait.until(EC.invisibility_of_element(loading_modal))
+            except NoSuchElementException:
+                pass
 
-    def __wait_until_clickable(self, find_element: str):
-        clickable_element = self.__browser.find_element(By.XPATH, find_element)
-        self.wait.until(EC.element_to_be_clickable(clickable_element))
+            return function_candidate(self, *args, **kwargs)
+
+        return wait_until_loaded
+
+    @load_page
+    def __press_button(self, search_type: str, button_name: str):
+        button_field = self.__browser.find_element(search_type, button_name)
+        button_field.click()
+
+    @load_page
+    def __write_field(self, search_type: str, field_name: str, field_value: str):
+        writeable_field = self.__browser.find_element(search_type, field_name)
+        writeable_field.send_keys(field_value)
+
+    @load_page
+    def __select_field(self, search_type: str, field_name: str):
+        select_field = self.__browser.find_element(search_type, field_name)
+        self.__browser.execute_script("arguments[0].scrollIntoView();", select_field)
+        if not select_field.is_selected():
+            select_field.click()
 
     def login(self, email: str, password: str):
         try:
-            self.__wait_until_loaded()
-
-            login_webcruiter = self.__browser.find_element(By.LINK_TEXT, "Logg inn")
-            login_webcruiter.click()
-
-            self.__wait_until_loaded()
-
-            email_field = self.__browser.find_element("id", "Start_Email")
-            email_field.send_keys(email)
-
-            start_next_button = self.__browser.find_element(By.ID, 'start-next-button')
-            start_next_button.click()
-
-            self.__wait_until_loaded()
-
-            password_field = self.__browser.find_element("id", "Login_Password_show")
-            password_field.send_keys(password)
-
-            login_next_button = self.__browser.find_element(By.ID, 'login-next-button')
-            login_next_button.click()
-
-            self.__wait_until_loaded()
-
+            self.__press_button(By.LINK_TEXT, "Logg inn")
+            self.__write_field(By.ID, "Start_Email", email)
+            self.__press_button(By.ID, "start-next-button")
+            self.__write_field(By.ID, "Login_Password_show", password)
+            self.__press_button(By.ID, "login-next-button")
         except TimeoutException as e:
             print(e)
 
-    def filter_by(self, filter_by_discipline: FilterByDiscipline):
-        if not isinstance(filter_by_discipline, FilterByDiscipline):
+    def filter_by(self, discipline: Discipline):
+        if not isinstance(discipline, Discipline):
             raise ValueError
 
-        self.__wait_until_loaded()
-        show_fields = self.__browser.find_element(By.XPATH, f'//span[starts-with(@aria-label, "Vis Fagfelt")]')
-        if show_fields.is_displayed():
-            show_fields.click()
-
-        element_to_find = f'//input[starts-with(@aria-label, "{filter_by_discipline.value}")]'
-        selected_fields = self.__browser.find_element(By.XPATH, element_to_find)
-        self.__wait_until_clickable(element_to_find)
-
-        if not selected_fields.is_selected():
-            selected_fields.click()
-            self.__wait_until_loaded()
+        try:
+            self.__press_button(By.XPATH, f'//span[starts-with(@aria-label, "Vis Fagfelt")]')
+        except ElementNotInteractableException:
+            pass
+        finally:
+            self.__select_field(By.XPATH, f'//input[starts-with(@aria-label, "{discipline.value}")]')
 
     def show_all_jobs(self):
-        element_to_find =  f'//button[starts-with(@data-bind, "click:loadMore")]'
+        element_to_find =  f'button[data-bind="click:loadMore,enter:loadMore,space:loadMore"]'
         while True:
             try:
-                show_more_field = self.__browser.find_element(By.XPATH, element_to_find)
-                show_more_field.click()
-                self.__wait_until_loaded()
+                self.__press_button(By.CSS_SELECTOR, element_to_find)
             except  ElementNotInteractableException:
                 break
 
+    @load_page
     def get_all_ad_overviews(self):
-        job_advertisements = []
         job_elements = self.__browser.find_elements(By.XPATH, '//a[starts-with(@id, "item")]')
-        self.__wait_until_loaded()
-
-        for job_element in job_elements:
-            job_advertisements.append(self.__get_job_advertisement(job_element))
-
-        return job_advertisements
-
-    def __get_job_advertisement(self, job_element):
-        ad_id = job_element.get_attribute("id")
-        ad_href = job_element.get_attribute("href")
-        ad_title = self.__get_ad_title(job_element)
-        city = self.__get_city_name(job_element)
-        published_date = self.__get_published_date(job_element)
-        deadline = self.__get_deadline(job_element)
-
-        return JobAdOverview(ad_id, ad_href, ad_title, city, published_date, deadline)
-
-    
-    def __get_ad_title(self, job_element):
-        title_element = job_element.find_element(By.XPATH, './/div[starts-with(@data-bind, "text:Heading")]')
-        return title_element.text
-
-    def __get_city_name(self, job_element):
-        city_element = job_element.find_element(By.XPATH, './/span[starts-with(@data-bind, "text:Workplace")]')
-        return city_element.text
-
-    def __get_published_date(self, job_element):
-        published_element = job_element.find_element(By.XPATH, './/span[starts-with(@data-bind, "shortDate:PublishedDate")]')
-        return published_element.text
-
-    def __get_deadline(self, job_element):
-        deadline_group = job_element.find_element(By.XPATH, './/div[starts-with(@data-template, "advert-status")]')
-        deadline_options = ["ThreeDaysLeft", "TwoDaysLeft", "LastChance", "HourLeft", "Deadline"]
-        for deadline_option in deadline_options:
-            deadline_element = deadline_group.find_element(By.XPATH, f'.//div[starts-with(@data-bind, "visible:{deadline_option}")]')
-            if deadline_element.is_displayed():
-                return deadline_element.text
+        return [JobAdOverview(job_element) for job_element in job_elements]
 
     def __enter__(self):
         self.__browser = webdriver.Firefox(options=self.__options)
@@ -166,15 +152,18 @@ class WebCruiterAutomation:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automatically retrieves all jobs from within a certain category on webcruiter.")
-    parser.add_argument("email", help="Enter an email", type=str)
-    parser.add_argument("password", help="Enter a password", type=str)
+    parser.add_argument("--email", help="Enter an email", type=str)
+    parser.add_argument("--password", help="Enter a password", type=str)
     parser.add_argument("--url", default="https://candidate.webcruiter.com/nb-no/home/companyadverts?companylock=906050#search", help="Enter a url to webcruiter", type=str)
 
     args = parser.parse_args()
 
     with WebCruiterAutomation(args.url) as webcruiter_bot:
-        webcruiter_bot.login(args.email, args.password)
-        webcruiter_bot.filter_by(FilterByDiscipline.teaching_and_training)
+        if args.email and args.password:
+            webcruiter_bot.login(args.email, args.password)
+
+        webcruiter_bot.filter_by(Discipline.teaching_and_training)
+        webcruiter_bot.filter_by(Discipline.leadership)
         webcruiter_bot.show_all_jobs()
         advertisements = webcruiter_bot.get_all_ad_overviews()
         for ad in advertisements:
