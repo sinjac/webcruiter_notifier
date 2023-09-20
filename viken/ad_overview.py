@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import atexit
 import argparse
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
@@ -68,13 +69,19 @@ class Discipline(enum.Enum):
     teaching_and_training = "Undervisning og opplæring"
 
 class WebCruiterAutomation:
-
     def __init__(self, webcruiter_url: str, firefox_path: str = "/usr/bin/firefox", timeout: float=10.0):
-        self.__options = Options()
-        self.__options.binary_location = firefox_path
-        self.__options.add_argument("--headless")
-        self.__timeout = timeout
-        self.__webcruiter_url = webcruiter_url
+        __options = Options()
+        __options.binary_location = firefox_path
+        __options.add_argument("--headless")
+        __timeout = timeout
+        __webcruiter_url = webcruiter_url
+
+        self.__browser = webdriver.Firefox(options=__options)
+        self.__browser.maximize_window()
+        self.__browser.get(__webcruiter_url)
+        self.wait = WebDriverWait(self.__browser, __timeout)
+        atexit.register(self.cleanup)
+
 
     def load_page(function_candidate: callable):
         def wait_until_loaded(self, *args, **kwargs):
@@ -135,19 +142,13 @@ class WebCruiterAutomation:
                 break
 
     @load_page
-    def get_all_ad_overviews(self):
+    def get_all_ad_overviews(self) -> list[JobAdOverview]:
         job_elements = self.__browser.find_elements(By.XPATH, '//a[starts-with(@id, "item")]')
         return [JobAdOverview(job_element) for job_element in job_elements]
 
-    def __enter__(self):
-        self.__browser = webdriver.Firefox(options=self.__options)
-        self.__browser.maximize_window()
-        self.__browser.get(self.__webcruiter_url)
-        self.wait = WebDriverWait(self.__browser, self.__timeout)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def cleanup(self):
         self.__browser.quit()
+
 
 
 if __name__ == "__main__":
@@ -158,13 +159,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    with WebCruiterAutomation(args.url) as webcruiter_bot:
-        if args.email and args.password:
-            webcruiter_bot.login(args.email, args.password)
+    webcruiter_bot = WebCruiterAutomation(args.url)
+    if args.email and args.password:
+        webcruiter_bot.login(args.email, args.password)
 
-        webcruiter_bot.filter_by(Discipline.teaching_and_training)
-        webcruiter_bot.filter_by(Discipline.leadership)
-        webcruiter_bot.show_all_jobs()
-        advertisements = webcruiter_bot.get_all_ad_overviews()
-        for ad in advertisements:
-            print(ad, "\n")
+    webcruiter_bot.filter_by(Discipline.teaching_and_training)
+    webcruiter_bot.filter_by(Discipline.leadership)
+    webcruiter_bot.show_all_jobs()
+    advertisements = webcruiter_bot.get_all_ad_overviews()
+    for ad in advertisements:
+        print(ad, "\n")
