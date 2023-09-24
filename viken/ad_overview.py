@@ -17,7 +17,7 @@ from dataclasses import dataclass, InitVar, field
 @dataclass
 class JobAdOverview:
     job_element: InitVar[WebElement]
-    webcruiter_id: str = field(init=False)
+    id: int = field(init=False)
     href: str = field(init=False)
     heading: str = field(init=False)
     city: str = field(init=False)
@@ -25,7 +25,7 @@ class JobAdOverview:
     deadline: str = field(init=False)
 
     def __post_init__(self, job_element: WebElement):
-        self.webcruiter_id = job_element.get_attribute("id")
+        self.id = int(job_element.get_attribute("id").removeprefix("item-"))
         self.href = job_element.get_attribute("href")
         self.heading = self.__get_ad_title(job_element)
         self.city = self.__get_city_name(job_element)
@@ -68,7 +68,7 @@ class Discipline(enum.Enum):
     restaurant = "Restaurant"
     teaching_and_training = "Undervisning og opplæring"
 
-class WebCruiterAutomation:
+class WebcruiterHomepageParser:
     def __init__(self, webcruiter_url: str, firefox_path: str = "/usr/bin/firefox", timeout: float=10.0):
         __options = Options()
         __options.binary_location = firefox_path
@@ -159,13 +159,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    webcruiter_bot = WebCruiterAutomation(args.url)
+    homepage_parser = WebcruiterHomepageParser(args.url)
     if args.email and args.password:
-        webcruiter_bot.login(args.email, args.password)
+        homepage_parser.login(args.email, args.password)
 
-    webcruiter_bot.filter_by(Discipline.teaching_and_training)
-    webcruiter_bot.filter_by(Discipline.leadership)
-    webcruiter_bot.show_all_jobs()
-    advertisements = webcruiter_bot.get_all_ad_overviews()
+    homepage_parser.filter_by(Discipline.teaching_and_training)
+    homepage_parser.filter_by(Discipline.leadership)
+    homepage_parser.show_all_jobs()
+    advertisements = homepage_parser.get_all_ad_overviews()
     for ad in advertisements:
         print(ad, "\n")
